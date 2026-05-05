@@ -2,9 +2,9 @@
 import streamlit as st
 from PIL import Image
 from pipeline import run_ocr, run_summarization, run_question_generation
-from utils import clean_ocr_output, detect_language
+from utils import clean_text, detect_language, extract_text_from_pdf
 
-st.set_page_config(page_title="AI Study Companion", layout="wide", page_icon="📚")
+st.set_page_config(page_title="AI Study Companion V2", layout="wide", page_icon="📚")
 
 st.markdown("""
 <style>
@@ -16,66 +16,94 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="main-header">📚 AI Study Companion</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">حوّل صور الكتب إلى ملخصات وأسئلة ذكية باستخدام Hugging Face Transformers</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📚 AI Study Companion V2</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">PDF + صور | تلخيص أكاديمي | أسئلة MCQ أو نظرية | Hugging Face Transformers</div>', unsafe_allow_html=True)
 
-uploaded_file = st.file_uploader("📤 ارفع صورة الصفحة (PNG/JPG)", type=["png", "jpg", "jpeg"])
+uploaded_file = st.file_uploader("📤 ارفع ملف المحاضرة (PDF أو صورة PNG/JPG)", type=["pdf", "png", "jpg", "jpeg"])
+q_type = st.radio("📝 نوع الأسئلة المطلوبة:", ["نظري (Theoretical)", "اختيار من متعدد (MCQ)"], horizontal=True)
 
 if uploaded_file:
-    image = Image.open(uploaded_file)
+    is_pdf = uploaded_file.name.lower().endswith(".pdf")
     col1, col2 = st.columns([1, 2])
+    
     with col1:
-        st.image(image, caption="الصفحة المرفوعة", use_column_width=True)
+        if is_pdf:
+            st.success(f"📄 تم رفع ملف PDF: {uploaded_file.name}")
+        else:
+            image = Image.open(uploaded_file)
+            st.image(image, caption="الصفحة المرفوعة", use_column_width=True)
+            
     with col2:
-        if st.button("▶️ بدء المعالجة", type="primary"):
+        if st.button("▶️ بدء المعالجة الذكية", type="primary"):
             progress = st.progress(0)
             status = st.empty()
-            
             try:
-                status.text("🔍 جاري استخراج النص (Nougat OCR)...")
-                progress.progress(20)
-                raw_text = run_ocr(image)
-                
-                status.text("🧹 جاري تنظيف النص وكشف اللغة...")
-                progress.progress(40)
-                clean_txt = clean_ocr_output(raw_text)
+                # 1. استخراج النص
+                status.text("📖 جاري استخراج النص...")
+                progress.progress(15)
+                if is_pdf:
+                    raw_text = extract_text_from_pdf(uploaded_file.getvalue())
+                else:
+                    raw_text = run_ocr(image)
+                    
+                if not raw_text.strip():
+                    st.error("⚠️ لم يتم استخراج نص. تأكد أن الملف يحتوي على نص واضح أو جرب صورة أعلى دقة.")
+                    st.stop()
+                    
+                # 2. التنظيف وكشف اللغة
+                status.text("🧹 تنظيف النص وتحليل اللغة...")
+                progress.progress(35)
+                clean_txt = clean_text(raw_text)
                 lang = detect_language(clean_txt)
                 
-                status.text(f"📑 جاري التلخيص ({'عربي' if lang=='ar' else 'English'})...")
+                # 3. التلخيص الأكاديمي
+                status.text(f"📑 جاري التلخيص الأكاديمي ({'عربي' if lang=='ar' else 'English'})...")
                 progress.progress(60)
                 summary = run_summarization(clean_txt, lang)
                 
-                status.text("❓ جاري توليد أسئلة المراجعة...")
-                progress.progress(80)
-                questions = run_question_generation(clean_txt, lang)
+                # 4. توليد الأسئلة
+                q_mode = "mcq" if "MCQ" in q_type else "theoretical"
+                status.text(f"❓ جاري توليد أسئلة {q_type}...")
+                progress.progress(85)
+                questions = run_question_generation(clean_txt, lang, q_type=q_mode)
                 
                 progress.progress(100)
                 status.text("✅ اكتملت المعالجة بنجاح!")
                 
                 st.session_state.update({
                     "clean": clean_txt, "summary": summary,
-                    "questions": questions, "lang": lang
+                    "questions": questions, "lang": lang, "q_type": q_type
                 })
             except Exception as e:
                 st.error(f"⚠️ حدث خطأ: {str(e)}")
                 st.stop()
 
 if "clean" in st.session_state:
-    tab1, tab2, tab3 = st.tabs(["📝 النص المستخرج", "📋 الملخص الذكي", "❓ أسئلة المراجعة"])
+    tab1, tab2, tab3 = st.tabs(["📝 النص المستخرج", "📋 الملخص الأكاديمي", f"❓ أسئلة {st.session_state['q_type']}"])
     with tab1:
         st.markdown('<div class="result-box">', unsafe_allow_html=True)
-        st.text_area("النص بعد التنظيف", st.session_state["clean"], height=300)
+        st.text_area("النص المعالج", st.session_state["clean"], height=300)
         st.markdown('</div>', unsafe_allow_html=True)
     with tab2:
         st.markdown('<div class="result-box">', unsafe_allow_html=True)
-        st.success(f"🌍 اللغة المكتشفة: {'العربية' if st.session_state['lang']=='ar' else 'الإنجليزية'}")
+        st.success(f"🌍 اللغة: {'العربية' if st.session_state['lang']=='ar' else 'الإنجليزية'}")
         st.markdown(st.session_state["summary"])
         st.markdown('</div>', unsafe_allow_html=True)
     with tab3:
         st.markdown('<div class="result-box">', unsafe_allow_html=True)
         if st.session_state["questions"]:
             for i, q in enumerate(st.session_state["questions"], 1):
-                st.markdown(f"**س{i}:** {q}")
+                st.markdown(f"**{i}.** {q}")
         else:
-            st.warning("لم يتم توليد أسئلة كافية. جرّب صفحة تحتوي على فقرات أوضح.")
+            st.warning("لم يتم توليد أسئلة كافية. جرّب ملفاً يحتوي على فقرات أطول أو أوضح.")
         st.markdown('</div>', unsafe_allow_html=True)
+        
+    # زر تصدير سريع
+    import json
+    export_data = {
+        "language": st.session_state["lang"],
+        "summary": st.session_state["summary"],
+        "questions": st.session_state["questions"]
+    }
+    st.download_button("📥 تصدير النتائج (JSON)", json.dumps(export_data, ensure_ascii=False, indent=2), 
+                       file_name="study_companion_results.json", mime="application/json")
